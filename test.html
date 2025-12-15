@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>PromptVerify Test</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 20px; }
+    input, select, textarea { margin: 5px; padding: 8px; }
+    button { padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; margin: 5px; }
+    button:hover { background: #0056b3; }
+    pre { background: #f4f4f4; padding: 15px; overflow-x: auto; }
+    .token-display { background: #e8f5e9; padding: 10px; margin: 10px 0; word-break: break-all; }
+    h2 { margin-top: 30px; border-bottom: 1px solid #ccc; padding-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <h1>PromptVerify API Test</h1>
+  
+  <div class="token-display">
+    <strong>Huidige Token:</strong> <span id="currentToken">Geen (log eerst in)</span>
+  </div>
+
+  <h2>Registratie</h2>
+  <input type="email" id="regEmail" placeholder="Email" value="nieuw@example.com">
+  <input type="password" id="regPassword" placeholder="Wachtwoord" value="wachtwoord123">
+  <input type="text" id="regName" placeholder="Naam" value="Nieuwe User">
+  <button onclick="register()">Registreer</button>
+  
+  <h2>Login</h2>
+  <input type="email" id="loginEmail" placeholder="Email" value="test@example.com">
+  <input type="password" id="loginPassword" placeholder="Wachtwoord" value="wachtwoord123">
+  <button onclick="login()">Login</button>
+
+  <h2>Nieuwe Prompt (vereist login)</h2>
+  <input type="text" id="promptTitle" placeholder="Titel" value="Code Review Helper"><br>
+  <input type="text" id="promptDesc" placeholder="Beschrijving" value="Krijg professionele code reviews"><br>
+  <input type="number" id="promptPrice" placeholder="Prijs" value="14.99">
+  <select id="promptCategory">
+    <option value="business">Business</option>
+    <option value="creative">Creative</option>
+    <option value="code" selected>Code</option>
+    <option value="marketing">Marketing</option>
+    <option value="image">Image</option>
+  </select>
+  <select id="promptModel">
+    <option value="chatgpt">ChatGPT</option>
+    <option value="claude" selected>Claude</option>
+    <option value="midjourney">Midjourney</option>
+  </select><br>
+  <textarea id="promptText" rows="3" cols="60">Review deze code en geef verbeterpunten: {code}</textarea><br>
+  <button onclick="createPrompt()">Maak Prompt</button>
+  
+  <h2>Alle Prompts</h2>
+  <button onclick="getPrompts()">Laad Prompts</button>
+
+  <h2>Verifieer Prompt</h2>
+  <input type="text" id="verifyPromptId" placeholder="Prompt ID">
+  <button onclick="verifyPromptApi()">Start Verificatie</button>
+  <p><small>Let op: dit duurt 30-60 seconden (3 AI tests)</small></p>
+
+  <h2>Koop Prompt</h2>
+  <input type="text" id="purchasePromptId" placeholder="Prompt ID">
+  <button onclick="purchasePrompt()">Koop Nu</button>
+
+  <h2>Mijn Gekochte Prompts</h2>
+  <button onclick="getMyPurchases()">Laad Mijn Aankopen</button>
+  
+  <h2>Resultaat:</h2>
+  <pre id="result">Klik op een knop...</pre>
+
+  <script>
+    let authToken = null;
+
+    async function register() {
+      document.getElementById('result').textContent = 'Bezig...';
+      try {
+        const response = await fetch('http://localhost:3001/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('regEmail').value,
+            password: document.getElementById('regPassword').value,
+            name: document.getElementById('regName').value,
+            role: 'seller'
+          })
+        });
+        const data = await response.json();
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('result').textContent = 'Fout: ' + error.message;
+      }
+    }
+
+    async function login() {
+      document.getElementById('result').textContent = 'Bezig...';
+      try {
+        const response = await fetch('http://localhost:3001/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: document.getElementById('loginEmail').value,
+            password: document.getElementById('loginPassword').value
+          })
+        });
+        const data = await response.json();
+        
+        if (data.token) {
+          authToken = data.token;
+          document.getElementById('currentToken').textContent = authToken.substring(0, 50) + '...';
+        }
+        
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('result').textContent = 'Fout: ' + error.message;
+      }
+    }
+
+    async function createPrompt() {
+      if (!authToken) {
+        document.getElementById('result').textContent = 'Je moet eerst inloggen!';
+        return;
+      }
+      
+      document.getElementById('result').textContent = 'Bezig...';
+      try {
+        const response = await fetch('http://localhost:3001/prompts', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + authToken
+          },
+          body: JSON.stringify({
+            title: document.getElementById('promptTitle').value,
+            description: document.getElementById('promptDesc').value,
+            price: document.getElementById('promptPrice').value,
+            category: document.getElementById('promptCategory').value,
+            aiModel: document.getElementById('promptModel').value,
+            promptText: document.getElementById('promptText').value
+          })
+        });
+        const data = await response.json();
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('result').textContent = 'Fout: ' + error.message;
+      }
+    }
+
+    async function getPrompts() {
+      document.getElementById('result').textContent = 'Bezig...';
+      try {
+        const response = await fetch('http://localhost:3001/prompts');
+        const data = await response.json();
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('result').textContent = 'Fout: ' + error.message;
+      }
+    }
+
+    async function verifyPromptApi() {
+      const promptId = document.getElementById('verifyPromptId').value;
+      document.getElementById('result').textContent = 'Verificatie bezig... (30-60 sec)';
+      try {
+        const response = await fetch(`http://localhost:3001/prompts/${promptId}/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        const data = await response.json();
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('result').textContent = 'Fout: ' + error.message;
+      }
+    }
+
+    async function purchasePrompt() {
+      if (!authToken) {
+        document.getElementById('result').textContent = 'Je moet eerst inloggen!';
+        return;
+      }
+      
+      const promptId = document.getElementById('purchasePromptId').value;
+      document.getElementById('result').textContent = 'Bezig...';
+      try {
+        const response = await fetch(`http://localhost:3001/prompts/${promptId}/purchase`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + authToken
+          }
+        });
+        const data = await response.json();
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('result').textContent = 'Fout: ' + error.message;
+      }
+    }
+
+    async function getMyPurchases() {
+      if (!authToken) {
+        document.getElementById('result').textContent = 'Je moet eerst inloggen!';
+        return;
+      }
+      
+      document.getElementById('result').textContent = 'Bezig...';
+      try {
+        const response = await fetch('http://localhost:3001/my/purchases', {
+          headers: { 
+            'Authorization': 'Bearer ' + authToken
+          }
+        });
+        const data = await response.json();
+        document.getElementById('result').textContent = JSON.stringify(data, null, 2);
+      } catch (error) {
+        document.getElementById('result').textContent = 'Fout: ' + error.message;
+      }
+    }
+  </script>
+</body>
+</html>

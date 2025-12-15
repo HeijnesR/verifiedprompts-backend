@@ -1,0 +1,81 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Gebruikers (kopers en verkopers)
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String
+  role      String   @default("buyer") // "buyer" of "seller"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaties
+  prompts   Prompt[]   // Prompts die deze user verkoopt
+  purchases Purchase[] // Aankopen van deze user
+  reviews   Review[]   // Reviews die deze user heeft geschreven
+}
+
+// Prompts die verkocht worden
+model Prompt {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  price       Float
+  category    String   // "business", "code", "creative", "marketing", "image"
+  aiModel     String   // "chatgpt", "midjourney", "dalle", "claude", etc.
+  promptText  String   // De daadwerkelijke prompt (alleen zichtbaar na aankoop)
+  
+  // AI Verificatie scores
+  verificationScore   Float?   // Gemiddelde score (1-10)
+  consistencyScore    Float?   // Hoe consistent zijn de outputs?
+  qualityScore        Float?   // Kwaliteit van outputs
+  isVerified          Boolean  @default(false)
+  
+  // Status
+  status    String   @default("pending") // "pending", "approved", "rejected"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relaties
+  sellerId  String
+  seller    User       @relation(fields: [sellerId], references: [id])
+  purchases Purchase[]
+  reviews   Review[]
+}
+
+// Aankopen
+model Purchase {
+  id        String   @id @default(cuid())
+  amount    Float    // Betaald bedrag
+  createdAt DateTime @default(now())
+
+  // Relaties
+  buyerId  String
+  buyer    User   @relation(fields: [buyerId], references: [id])
+  promptId String
+  prompt   Prompt @relation(fields: [promptId], references: [id])
+}
+
+// Reviews
+model Review {
+  id        String   @id @default(cuid())
+  rating    Int      // 1-5 sterren
+  comment   String?
+  createdAt DateTime @default(now())
+
+  // Relaties
+  userId   String
+  user     User   @relation(fields: [userId], references: [id])
+  promptId String
+  prompt   Prompt @relation(fields: [promptId], references: [id])
+}
