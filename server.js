@@ -348,8 +348,8 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
         },
       ],
       mode: 'payment',
-      success_url: `http://localhost:3000/purchase-success?session_id={CHECKOUT_SESSION_ID}&prompt_id=${id}`,
-      cancel_url: `http://localhost:3000/prompt/${id}`,
+      success_url: `https://verifiedprompts-frontend.vercel.app/purchase-success?session_id={CHECKOUT_SESSION_ID}&prompt_id=${id}`,
+      cancel_url: `https://verifiedprompts-frontend.vercel.app/prompt/${id}`,
       metadata: {
         promptId: id,
         buyerId: buyerId,
