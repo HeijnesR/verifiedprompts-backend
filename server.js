@@ -7,7 +7,10 @@ require('dotenv').config();
 const prisma = require('./db');
 const { verifyPrompt } = require('./verify');
 const jwt = require('jsonwebtoken');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY, {
+  apiVersion: '2023-10-16',
+  maxNetworkRetries: 3,
+});
 
 // Maak de server
 const app = express();
