@@ -1,15 +1,18 @@
-// server.js - PromptVerify Backend
+// server.js - VerifiedPrompts Backend
 
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const prisma = require('./db');
 const { verifyPrompt } = require('./verify');
-const jwt = require('jsonwebtoken');
+
+// Stripe configuratie
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2023-10-16',
   maxNetworkRetries: 3,
+  timeout: 30000,
 });
 
 // Maak de server
@@ -38,72 +41,27 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Haal prompt details op (promptText alleen als gekocht of eigenaar)
-app.get('/prompts/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    // Check voor token (optioneel)
-    let userId = null;
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        userId = decoded.userId;
-      } catch (err) {
-        // Token ongeldig, maar dat is ok - user is gewoon niet ingelogd
-      }
-    }
+// Test endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'VerifiedPrompts API is running!',
+    status: 'success'
+  });
+});
 
-    const prompt = await prisma.prompt.findUnique({
-      where: { id },
-      include: {
-        seller: {
-          select: { id: true, name: true }
-        }
+// Haal alle users op
+app.get('/users', async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        createdAt: true
       }
     });
-
-    if (!prompt) {
-      return res.status(404).json({ error: 'Prompt niet gevonden' });
-    }
-
-    // Check of user eigenaar is of heeft gekocht
-    let hasAccess = false;
-    if (userId) {
-      const isOwner = prompt.sellerId === userId;
-      const hasPurchased = await prisma.purchase.findFirst({
-        where: { buyerId: userId, promptId: id }
-      });
-      hasAccess = isOwner || !!hasPurchased;
-    }
-
-    // Bouw response
-    const response = {
-      id: prompt.id,
-      title: prompt.title,
-      description: prompt.description,
-      price: prompt.price,
-      category: prompt.category,
-      aiModel: prompt.aiModel,
-      verificationScore: prompt.verificationScore,
-      qualityScore: prompt.qualityScore,
-      consistencyScore: prompt.consistencyScore,
-      isVerified: prompt.isVerified,
-      seller: prompt.seller,
-      createdAt: prompt.createdAt,
-      hasAccess: hasAccess
-    };
-
-    // Alleen promptText tonen als user toegang heeft
-    if (hasAccess) {
-      response.promptText = prompt.promptText;
-    }
-
-    res.json(response);
-
+    res.json(users);
   } catch (error) {
     res.status(500).json({ error: 'Database error', details: error.message });
   }
@@ -114,12 +72,10 @@ app.post('/register', async (req, res) => {
   try {
     const { email, password, name, role } = req.body;
 
-    // Check of alle velden zijn ingevuld
     if (!email || !password) {
       return res.status(400).json({ error: 'Email en wachtwoord zijn verplicht' });
     }
 
-    // Check of email al bestaat
     const existingUser = await prisma.user.findUnique({
       where: { email }
     });
@@ -128,10 +84,8 @@ app.post('/register', async (req, res) => {
       return res.status(400).json({ error: 'Deze email is al geregistreerd' });
     }
 
-    // Hash het wachtwoord (beveilig het)
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Maak de user aan
     const user = await prisma.user.create({
       data: {
         email,
@@ -179,7 +133,6 @@ app.post('/login', async (req, res) => {
       return res.status(400).json({ error: 'Ongeldige email of wachtwoord' });
     }
 
-    // Maak JWT token
     const token = jwt.sign(
       { userId: user.id, email: user.email, role: user.role },
       process.env.JWT_SECRET,
@@ -199,6 +152,54 @@ app.post('/login', async (req, res) => {
 
   } catch (error) {
     res.status(500).json({ error: 'Server error', details: error.message });
+  }
+});
+
+// Haal alle prompts op (met filters)
+app.get('/prompts', async (req, res) => {
+  try {
+    const { category, aiModel, minPrice, maxPrice, verified } = req.query;
+    
+    const where = {
+      status: 'approved'
+    };
+    
+    if (category) where.category = category;
+    if (aiModel) where.aiModel = aiModel;
+    if (verified === 'true') where.isVerified = true;
+    if (minPrice || maxPrice) {
+      where.price = {};
+      if (minPrice) where.price.gte = parseFloat(minPrice);
+      if (maxPrice) where.price.lte = parseFloat(maxPrice);
+    }
+
+    const prompts = await prisma.prompt.findMany({
+      where,
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        price: true,
+        category: true,
+        aiModel: true,
+        verificationScore: true,
+        qualityScore: true,
+        consistencyScore: true,
+        isVerified: true,
+        createdAt: true,
+        seller: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+    
+    res.json(prompts);
+  } catch (error) {
+    res.status(500).json({ error: 'Database error', details: error.message });
   }
 });
 
@@ -234,21 +235,68 @@ app.post('/prompts', authenticateToken, async (req, res) => {
   }
 });
 
-// Haal alle prompts op
-app.get('/prompts', async (req, res) => {
+// Haal prompt details op (promptText alleen als gekocht of eigenaar)
+app.get('/prompts/:id', async (req, res) => {
   try {
-    const prompts = await prisma.prompt.findMany({
+    const { id } = req.params;
+    
+    let userId = null;
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        userId = decoded.userId;
+      } catch (err) {
+        // Token ongeldig, maar dat is ok
+      }
+    }
+
+    const prompt = await prisma.prompt.findUnique({
+      where: { id },
       include: {
         seller: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
+          select: { id: true, name: true }
         }
       }
     });
-    res.json(prompts);
+
+    if (!prompt) {
+      return res.status(404).json({ error: 'Prompt niet gevonden' });
+    }
+
+    let hasAccess = false;
+    if (userId) {
+      const isOwner = prompt.sellerId === userId;
+      const hasPurchased = await prisma.purchase.findFirst({
+        where: { buyerId: userId, promptId: id }
+      });
+      hasAccess = isOwner || !!hasPurchased;
+    }
+
+    const response = {
+      id: prompt.id,
+      title: prompt.title,
+      description: prompt.description,
+      price: prompt.price,
+      category: prompt.category,
+      aiModel: prompt.aiModel,
+      verificationScore: prompt.verificationScore,
+      qualityScore: prompt.qualityScore,
+      consistencyScore: prompt.consistencyScore,
+      isVerified: prompt.isVerified,
+      seller: prompt.seller,
+      createdAt: prompt.createdAt,
+      hasAccess: hasAccess
+    };
+
+    if (hasAccess) {
+      response.promptText = prompt.promptText;
+    }
+
+    res.json(response);
+
   } catch (error) {
     res.status(500).json({ error: 'Database error', details: error.message });
   }
@@ -259,7 +307,6 @@ app.post('/prompts/:id/verify', async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Haal de prompt op
     const prompt = await prisma.prompt.findUnique({
       where: { id }
     });
@@ -268,17 +315,14 @@ app.post('/prompts/:id/verify', async (req, res) => {
       return res.status(404).json({ error: 'Prompt niet gevonden' });
     }
 
-    // Test inputs gebaseerd op de prompt variabelen
     const testInputs = [
       { onderwerp: 'sollicitatie', toon: 'formeel', lengte: 'kort' },
       { onderwerp: 'klacht over product', toon: 'beleefd maar direct', lengte: 'gemiddeld' },
       { onderwerp: 'bedankje aan collega', toon: 'vriendelijk', lengte: 'kort' }
     ];
 
-    // Verifieer de prompt (3 tests om API kosten laag te houden)
     const verification = await verifyPrompt(prompt.promptText, testInputs, 3);
 
-    // Update de prompt in de database
     const updatedPrompt = await prisma.prompt.update({
       where: { id },
       data: {
@@ -334,6 +378,9 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'You already own this prompt' });
     }
 
+    // Bereken prijs in centen (Stripe werkt met centen)
+    const priceInCents = Math.round(prompt.price * 100);
+
     // Maak Stripe checkout sessie
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -343,16 +390,16 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
             currency: 'usd',
             product_data: {
               name: prompt.title,
-              description: prompt.description,
+              description: prompt.description || 'AI Prompt',
             },
-            unit_amount: Math.round(prompt.price * 100), // Stripe werkt in centen
+            unit_amount: priceInCents,
           },
           quantity: 1,
         },
       ],
       mode: 'payment',
-      success_url: `https://verifiedprompts-frontend.vercel.app/purchase-success?session_id={CHECKOUT_SESSION_ID}&prompt_id=${id}`,
-      cancel_url: `https://verifiedprompts-frontend.vercel.app/prompt/${id}`,
+      success_url: `https://getverifiedprompts.com/purchase-success?session_id={CHECKOUT_SESSION_ID}&prompt_id=${id}`,
+      cancel_url: `https://getverifiedprompts.com/prompt/${id}`,
       metadata: {
         promptId: id,
         buyerId: buyerId,
@@ -362,6 +409,7 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
     res.json({ checkoutUrl: session.url });
 
   } catch (error) {
+    console.error('Stripe checkout error:', error);
     res.status(500).json({ error: 'Checkout error', details: error.message });
   }
 });
@@ -390,7 +438,6 @@ app.post('/prompts/:id/confirm-purchase', authenticateToken, async (req, res) =>
     });
 
     if (existingPurchase) {
-      // Al verwerkt, stuur gewoon de prompt terug
       const prompt = await prisma.prompt.findUnique({ where: { id } });
       return res.json({
         message: 'Already purchased',
@@ -421,7 +468,7 @@ app.post('/prompts/:id/confirm-purchase', authenticateToken, async (req, res) =>
   }
 });
 
-// Behoud ook de oude gratis purchase voor testen
+// Gratis purchase endpoint (voor testen - kan later verwijderd worden)
 app.post('/prompts/:id/purchase', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -499,65 +546,60 @@ app.get('/my/purchases', authenticateToken, async (req, res) => {
   }
 });
 
-// Haal prompt details op (promptText alleen als gekocht of eigenaar)
-app.get('/prompts/:id', authenticateToken, async (req, res) => {
+// Stripe Webhook endpoint
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
   try {
-    const { id } = req.params;
-    const userId = req.user.userId;
-
-    const prompt = await prisma.prompt.findUnique({
-      where: { id },
-      include: {
-        seller: {
-          select: { id: true, name: true }
-        }
-      }
-    });
-
-    if (!prompt) {
-      return res.status(404).json({ error: 'Prompt niet gevonden' });
-    }
-
-    // Check of user eigenaar is of heeft gekocht
-    const isOwner = prompt.sellerId === userId;
-    const hasPurchased = await prisma.purchase.findFirst({
-      where: { buyerId: userId, promptId: id }
-    });
-
-    // Bouw response
-    const response = {
-      id: prompt.id,
-      title: prompt.title,
-      description: prompt.description,
-      price: prompt.price,
-      category: prompt.category,
-      aiModel: prompt.aiModel,
-      verificationScore: prompt.verificationScore,
-      qualityScore: prompt.qualityScore,
-      consistencyScore: prompt.consistencyScore,
-      isVerified: prompt.isVerified,
-      seller: prompt.seller,
-      createdAt: prompt.createdAt,
-      hasAccess: isOwner || !!hasPurchased
-    };
-
-    // Alleen promptText tonen als user toegang heeft
-    if (isOwner || hasPurchased) {
-      response.promptText = prompt.promptText;
-    }
-
-    res.json(response);
-
-  } catch (error) {
-    res.status(500).json({ error: 'Database error', details: error.message });
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
+
+  // Handle the event
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    
+    // Automatisch purchase aanmaken na succesvolle betaling
+    try {
+      const { promptId, buyerId } = session.metadata;
+      
+      const existingPurchase = await prisma.purchase.findFirst({
+        where: { buyerId, promptId }
+      });
+
+      if (!existingPurchase) {
+        const prompt = await prisma.prompt.findUnique({ where: { id: promptId } });
+        
+        await prisma.purchase.create({
+          data: {
+            buyerId,
+            promptId,
+            amount: prompt.price
+          }
+        });
+        
+        console.log('Purchase created via webhook for prompt:', promptId);
+      }
+    } catch (error) {
+      console.error('Error processing webhook:', error);
+    }
+  }
+
+  res.json({ received: true });
 });
 
 // Start de server
 app.listen(PORT, () => {
   console.log(`
   ================================
-  🚀 PromptVerify Server Started!
+  🚀 VerifiedPrompts Server Started!
   ================================
   URL: http://localhost:${PORT}
   ================================
