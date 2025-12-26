@@ -187,6 +187,14 @@ app.get('/prompts', async (req, res) => {
         consistencyScore: true,
         isVerified: true,
         createdAt: true,
+        // NIEUW: bewijs velden
+        targetAudience: true,
+        useCase: true,
+        recommendedModel: true,
+        exampleOutput: true,
+        outputScreenshots: true,
+        usageTips: true,
+        // END NIEUW
         seller: {
           select: {
             id: true,
@@ -288,7 +296,14 @@ app.get('/prompts/:id', async (req, res) => {
       isVerified: prompt.isVerified,
       seller: prompt.seller,
       createdAt: prompt.createdAt,
-      hasAccess: hasAccess
+      hasAccess: hasAccess,
+      // NIEUW: bewijs velden
+      targetAudience: prompt.targetAudience,
+      useCase: prompt.useCase,
+      recommendedModel: prompt.recommendedModel,
+      exampleOutput: prompt.exampleOutput,
+      outputScreenshots: prompt.outputScreenshots,
+      usageTips: prompt.usageTips
     };
 
     if (hasAccess) {

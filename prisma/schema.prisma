@@ -41,6 +41,30 @@ model Prompt {
   qualityScore        Float?   // Kwaliteit van outputs
   isVerified          Boolean  @default(false)
   
+  // ============================================
+  // NIEUW: Bewijs velden voor anti-commoditisatie
+  // ============================================
+  
+  // Voor wie is deze prompt?
+  targetAudience      String?  // "freelance copywriters", "e-commerce managers", etc.
+  
+  // Wanneer gebruik je deze prompt?
+  useCase             String?  // "When you need to write product descriptions quickly"
+  
+  // Welk model werkt het beste?
+  recommendedModel    String?  // "GPT-4 Turbo" of "Claude 3 Opus" - specifieker dan aiModel
+  
+  // Voorbeeld output - het bewijs dat het werkt
+  exampleOutput       String?  // Markdown tekst met voorbeeld resultaat
+  
+  // Screenshot URLs (JSON array voor meerdere screenshots)
+  outputScreenshots   String[] // ["https://...", "https://..."]
+  
+  // Extra tips voor beste resultaten
+  usageTips           String?  // "Works best with temperature 0.7, include specific details about..."
+  
+  // ============================================
+  
   // Status
   status    String   @default("pending") // "pending", "approved", "rejected"
   createdAt DateTime @default(now())
