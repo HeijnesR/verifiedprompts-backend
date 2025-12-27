@@ -50,6 +50,115 @@ function authenticateToken(req, res, next) {
   });
 }
 
+// =====================
+// STRIPE CONNECT ENDPOINTS
+// =====================
+
+// Start Stripe Connect onboarding voor verkoper
+app.post('/stripe/connect', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    
+    // Check of user al een Stripe account heeft
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    
+    let accountId = user.stripeAccountId;
+    
+    // Maak nieuw Stripe Connect account als die nog niet bestaat
+    if (!accountId) {
+      const account = await stripe.accounts.create({
+        type: 'express',
+        country: 'NL', // Kan later dynamisch worden
+        email: user.email,
+        capabilities: {
+          card_payments: { requested: true },
+          transfers: { requested: true },
+        },
+      });
+      
+      accountId = account.id;
+      
+      // Sla account ID op in database
+      await prisma.user.update({
+        where: { id: userId },
+        data: { stripeAccountId: accountId }
+      });
+    }
+    
+    // Maak onboarding link
+    const accountLink = await stripe.accountLinks.create({
+      account: accountId,
+      refresh_url: 'https://getverifiedprompts.com/seller-dashboard?refresh=true',
+      return_url: 'https://getverifiedprompts.com/seller-dashboard?success=true',
+      type: 'account_onboarding',
+    });
+    
+    res.json({ url: accountLink.url });
+    
+  } catch (error) {
+    console.error('Stripe Connect error:', error);
+    res.status(500).json({ error: 'Could not create Stripe Connect account', details: error.message });
+  }
+});
+
+// Check Stripe Connect status
+app.get('/stripe/connect/status', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    
+    if (!user.stripeAccountId) {
+      return res.json({ 
+        connected: false, 
+        onboardingComplete: false 
+      });
+    }
+    
+    // Haal account details op van Stripe
+    const account = await stripe.accounts.retrieve(user.stripeAccountId);
+    
+    const onboardingComplete = account.charges_enabled && account.payouts_enabled;
+    
+    // Update database als onboarding compleet is
+    if (onboardingComplete && !user.stripeOnboardingComplete) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { stripeOnboardingComplete: true }
+      });
+    }
+    
+    res.json({ 
+      connected: true,
+      onboardingComplete,
+      chargesEnabled: account.charges_enabled,
+      payoutsEnabled: account.payouts_enabled
+    });
+    
+  } catch (error) {
+    console.error('Stripe status error:', error);
+    res.status(500).json({ error: 'Could not check Stripe status', details: error.message });
+  }
+});
+
+// Stripe Connect dashboard link (voor verkoper om earnings te zien)
+app.get('/stripe/connect/dashboard', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    
+    if (!user.stripeAccountId) {
+      return res.status(400).json({ error: 'No Stripe account connected' });
+    }
+    
+    const loginLink = await stripe.accounts.createLoginLink(user.stripeAccountId);
+    res.json({ url: loginLink.url });
+    
+  } catch (error) {
+    console.error('Stripe dashboard error:', error);
+    res.status(500).json({ error: 'Could not create dashboard link', details: error.message });
+  }
+});
+
 // Functie om proof data te genereren met Claude
 async function generateProofData(title, description, promptText, category) {
   try {
@@ -509,7 +618,7 @@ app.post('/prompts/:id/verify', async (req, res) => {
   }
 });
 
-// Maak Stripe checkout sessie voor een prompt
+// Maak Stripe checkout sessie voor een prompt (met Connect split)
 app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -541,8 +650,12 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
     }
 
     const priceInCents = Math.round(prompt.price * 100);
-
-    const session = await stripe.checkout.sessions.create({
+    
+    // Bereken platform fee (30%) en verkoper earnings (70%)
+    const platformFee = Math.round(priceInCents * 0.30);
+    
+    // Bouw checkout sessie options
+    const sessionOptions = {
       payment_method_types: ['card'],
       line_items: [
         {
@@ -563,8 +676,21 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
       metadata: {
         promptId: id,
         buyerId: buyerId,
+        sellerId: prompt.sellerId,
       },
-    });
+    };
+    
+    // Als verkoper Stripe Connect heeft, gebruik split payment
+    if (prompt.seller.stripeAccountId && prompt.seller.stripeOnboardingComplete) {
+      sessionOptions.payment_intent_data = {
+        application_fee_amount: platformFee,
+        transfer_data: {
+          destination: prompt.seller.stripeAccountId,
+        },
+      };
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionOptions);
 
     res.json({ checkoutUrl: session.url });
 
