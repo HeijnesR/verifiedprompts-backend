@@ -1,0 +1,36 @@
+{
+  "lastUpdated": "2024-12-27",
+  "models": {
+    "chatgpt": {
+      "name": "ChatGPT",
+      "recommended": "GPT-5.2",
+      "alternatives": ["GPT-4o", "o1"],
+      "description": "Best for general tasks, fast and capable"
+    },
+    "claude": {
+      "name": "Claude",
+      "recommended": "Claude 4.5 Sonnet",
+      "alternatives": ["Claude 4.5 Opus", "Claude 4.5 Haiku"],
+      "description": "Best for nuanced writing and complex reasoning"
+    },
+    "gemini": {
+      "name": "Gemini",
+      "recommended": "Gemini 3",
+      "alternatives": ["Gemini 2.0 Flash"],
+      "description": "Best for multimodal tasks"
+    },
+    "midjourney": {
+      "name": "Midjourney",
+      "recommended": "Midjourney v7",
+      "alternatives": ["Midjourney v6.1"],
+      "description": "Best for image generation"
+    }
+  },
+  "promptRecommendations": {
+    "code": "Claude 4.5 Opus or GPT-5.2",
+    "business": "GPT-5.2 or Claude 4.5 Sonnet",
+    "marketing": "GPT-5.2 or Claude 4.5 Sonnet",
+    "creative": "Claude 4.5 Sonnet or GPT-5.2",
+    "image": "Use prompt with Midjourney v7"
+  }
+}

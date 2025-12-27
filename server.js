@@ -4,6 +4,8 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
 const prisma = require('./db');
 const { verifyPrompt } = require('./verify');
@@ -47,6 +49,48 @@ app.get('/', (req, res) => {
     message: 'VerifiedPrompts API is running!',
     status: 'success'
   });
+});
+
+// Haal actuele AI modellen op
+app.get('/models', (req, res) => {
+  try {
+    const modelsPath = path.join(__dirname, 'models.json');
+    const modelsData = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
+    res.json(modelsData);
+  } catch (error) {
+    // Fallback als bestand niet bestaat
+    res.json({
+      lastUpdated: "2024-12-27",
+      models: {
+        chatgpt: { recommended: "GPT-4o" },
+        claude: { recommended: "Claude 4 Sonnet" },
+        gemini: { recommended: "Gemini 2.0 Flash" },
+        midjourney: { recommended: "Midjourney v6.1" }
+      },
+      promptRecommendations: {
+        code: "Claude 4 Opus or GPT-4o",
+        business: "GPT-4o or Claude 4 Sonnet",
+        marketing: "GPT-4o or Claude 4 Sonnet",
+        creative: "Claude 4 Sonnet or GPT-4o",
+        image: "Use prompt with Midjourney v6.1"
+      }
+    });
+  }
+});
+
+// Update models.json (admin)
+app.put('/models', authenticateToken, (req, res) => {
+  try {
+    const modelsPath = path.join(__dirname, 'models.json');
+    const newData = {
+      ...req.body,
+      lastUpdated: new Date().toISOString().split('T')[0]
+    };
+    fs.writeFileSync(modelsPath, JSON.stringify(newData, null, 2));
+    res.json({ message: 'Models updated', data: newData });
+  } catch (error) {
+    res.status(500).json({ error: 'Could not update models', details: error.message });
+  }
 });
 
 // Haal alle users op
