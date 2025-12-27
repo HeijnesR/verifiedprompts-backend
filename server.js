@@ -664,6 +664,7 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
             product_data: {
               name: prompt.title,
               description: prompt.description || 'AI Prompt',
+              tax_code: 'txcd_10000000', // Digital goods/services
             },
             unit_amount: priceInCents,
           },
@@ -671,6 +672,7 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
         },
       ],
       mode: 'payment',
+      automatic_tax: { enabled: true },
       success_url: `https://getverifiedprompts.com/purchase-success?session_id={CHECKOUT_SESSION_ID}&prompt_id=${id}`,
       cancel_url: `https://getverifiedprompts.com/prompt/${id}`,
       metadata: {
