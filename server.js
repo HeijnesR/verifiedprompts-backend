@@ -6,9 +6,15 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
 const prisma = require('./db');
 const { verifyPrompt } = require('./verify');
+
+// Anthropic client voor proof data generatie
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
 
 // Stripe configuratie
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY, {
@@ -43,6 +49,83 @@ function authenticateToken(req, res, next) {
   });
 }
 
+// Functie om proof data te genereren met Claude
+async function generateProofData(title, description, promptText, category) {
+  try {
+    const modelsPath = path.join(__dirname, 'models.json');
+    let modelsConfig = {};
+    try {
+      modelsConfig = JSON.parse(fs.readFileSync(modelsPath, 'utf8'));
+    } catch (e) {
+      // Fallback als bestand niet bestaat
+      modelsConfig = {
+        models: {
+          chatgpt: { recommended: "GPT-5.2" },
+          claude: { recommended: "Claude 4.5 Sonnet" }
+        }
+      };
+    }
+
+    const systemPrompt = `You are an expert at analyzing AI prompts and generating compelling proof data for a prompt marketplace. Your task is to analyze a prompt and generate marketing-friendly proof data that helps buyers understand the value.
+
+Always respond in valid JSON format with these exact fields:
+- targetAudience: Who should buy this prompt (1-2 sentences)
+- useCase: Primary use case and problem it solves (1-2 sentences)  
+- recommendedModel: Which AI model works best (use current models: ${modelsConfig.models?.chatgpt?.recommended || 'GPT-5.2'}, ${modelsConfig.models?.claude?.recommended || 'Claude 4.5 Sonnet'}, ${modelsConfig.models?.midjourney?.recommended || 'Midjourney v7'})
+- exampleOutput: A realistic example of what output this prompt generates (use markdown formatting, 100-300 words)
+- usageTips: How to get the best results, including which variables to fill in (use markdown formatting, list the variables found in the prompt)`;
+
+    const userPrompt = `Analyze this prompt and generate proof data:
+
+**Title:** ${title}
+**Description:** ${description}
+**Category:** ${category}
+**Prompt Text:**
+${promptText}
+
+Generate compelling proof data in JSON format. For the exampleOutput, create a realistic example of what this prompt would generate. For usageTips, identify all variables in curly braces like {variable_name} and explain what to fill in for each.`;
+
+    const message = await anthropic.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1500,
+      messages: [
+        { role: "user", content: userPrompt }
+      ],
+      system: systemPrompt
+    });
+
+    const responseText = message.content[0].text;
+    
+    // Extract JSON from response (handle potential markdown code blocks)
+    let jsonStr = responseText;
+    if (responseText.includes('```json')) {
+      jsonStr = responseText.split('```json')[1].split('```')[0];
+    } else if (responseText.includes('```')) {
+      jsonStr = responseText.split('```')[1].split('```')[0];
+    }
+    
+    const proofData = JSON.parse(jsonStr.trim());
+    
+    return {
+      targetAudience: proofData.targetAudience || '',
+      useCase: proofData.useCase || '',
+      recommendedModel: proofData.recommendedModel || '',
+      exampleOutput: proofData.exampleOutput || '',
+      usageTips: proofData.usageTips || ''
+    };
+  } catch (error) {
+    console.error('Error generating proof data:', error);
+    // Return empty proof data if generation fails
+    return {
+      targetAudience: '',
+      useCase: '',
+      recommendedModel: '',
+      exampleOutput: '',
+      usageTips: ''
+    };
+  }
+}
+
 // Test endpoint
 app.get('/', (req, res) => {
   res.json({ 
@@ -62,17 +145,17 @@ app.get('/models', (req, res) => {
     res.json({
       lastUpdated: "2024-12-27",
       models: {
-        chatgpt: { recommended: "GPT-4o" },
-        claude: { recommended: "Claude 4 Sonnet" },
-        gemini: { recommended: "Gemini 2.0 Flash" },
-        midjourney: { recommended: "Midjourney v6.1" }
+        chatgpt: { recommended: "GPT-5.2" },
+        claude: { recommended: "Claude 4.5 Sonnet" },
+        gemini: { recommended: "Gemini 3" },
+        midjourney: { recommended: "Midjourney v7" }
       },
       promptRecommendations: {
-        code: "Claude 4 Opus or GPT-4o",
-        business: "GPT-4o or Claude 4 Sonnet",
-        marketing: "GPT-4o or Claude 4 Sonnet",
-        creative: "Claude 4 Sonnet or GPT-4o",
-        image: "Use prompt with Midjourney v6.1"
+        code: "Claude 4.5 Opus or GPT-5.2",
+        business: "GPT-5.2 or Claude 4.5 Sonnet",
+        marketing: "GPT-5.2 or Claude 4.5 Sonnet",
+        creative: "Claude 4.5 Sonnet or GPT-5.2",
+        image: "Use prompt with Midjourney v7"
       }
     });
   }
@@ -231,14 +314,12 @@ app.get('/prompts', async (req, res) => {
         consistencyScore: true,
         isVerified: true,
         createdAt: true,
-        // NIEUW: bewijs velden
         targetAudience: true,
         useCase: true,
         recommendedModel: true,
         exampleOutput: true,
         outputScreenshots: true,
         usageTips: true,
-        // END NIEUW
         seller: {
           select: {
             id: true,
@@ -255,7 +336,7 @@ app.get('/prompts', async (req, res) => {
   }
 });
 
-// Maak nieuwe prompt aan (alleen voor ingelogde users)
+// Maak nieuwe prompt aan met automatische proof data generatie
 app.post('/prompts', authenticateToken, async (req, res) => {
   try {
     const { title, description, price, category, aiModel, promptText } = req.body;
@@ -263,6 +344,11 @@ app.post('/prompts', authenticateToken, async (req, res) => {
     if (!title || !description || !price || !category || !aiModel || !promptText) {
       return res.status(400).json({ error: 'Alle velden zijn verplicht' });
     }
+
+    // Genereer proof data met AI
+    console.log('Generating proof data for:', title);
+    const proofData = await generateProofData(title, description, promptText, category);
+    console.log('Proof data generated:', proofData.targetAudience ? 'Success' : 'Empty');
 
     const prompt = await prisma.prompt.create({
       data: {
@@ -273,12 +359,18 @@ app.post('/prompts', authenticateToken, async (req, res) => {
         aiModel,
         promptText,
         sellerId: req.user.userId,
-        status: 'pending'
+        status: 'pending',
+        // Auto-generated proof data
+        targetAudience: proofData.targetAudience,
+        useCase: proofData.useCase,
+        recommendedModel: proofData.recommendedModel,
+        exampleOutput: proofData.exampleOutput,
+        usageTips: proofData.usageTips
       }
     });
 
     res.status(201).json({ 
-      message: 'Prompt aangemaakt!',
+      message: 'Prompt aangemaakt met automatische proof data!',
       prompt
     });
 
@@ -341,7 +433,6 @@ app.get('/prompts/:id', async (req, res) => {
       seller: prompt.seller,
       createdAt: prompt.createdAt,
       hasAccess: hasAccess,
-      // NIEUW: bewijs velden
       targetAudience: prompt.targetAudience,
       useCase: prompt.useCase,
       recommendedModel: prompt.recommendedModel,
@@ -410,7 +501,6 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
     const { id } = req.params;
     const buyerId = req.user.userId;
 
-    // Haal de prompt op
     const prompt = await prisma.prompt.findUnique({
       where: { id },
       include: { seller: true }
@@ -428,7 +518,6 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'You cannot buy your own prompt' });
     }
 
-    // Check of al gekocht
     const existingPurchase = await prisma.purchase.findFirst({
       where: { buyerId, promptId: id }
     });
@@ -437,10 +526,8 @@ app.post('/prompts/:id/checkout', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'You already own this prompt' });
     }
 
-    // Bereken prijs in centen (Stripe werkt met centen)
     const priceInCents = Math.round(prompt.price * 100);
 
-    // Maak Stripe checkout sessie
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [
@@ -480,7 +567,6 @@ app.post('/prompts/:id/confirm-purchase', authenticateToken, async (req, res) =>
     const { sessionId } = req.body;
     const buyerId = req.user.userId;
 
-    // Verifieer de Stripe sessie
     const session = await stripe.checkout.sessions.retrieve(sessionId);
 
     if (session.payment_status !== 'paid') {
@@ -491,7 +577,6 @@ app.post('/prompts/:id/confirm-purchase', authenticateToken, async (req, res) =>
       return res.status(400).json({ error: 'Invalid session' });
     }
 
-    // Check of al gekocht
     const existingPurchase = await prisma.purchase.findFirst({
       where: { buyerId, promptId: id }
     });
@@ -504,10 +589,8 @@ app.post('/prompts/:id/confirm-purchase', authenticateToken, async (req, res) =>
       });
     }
 
-    // Haal prompt op
     const prompt = await prisma.prompt.findUnique({ where: { id } });
 
-    // Maak de purchase aan
     const purchase = await prisma.purchase.create({
       data: {
         buyerId,
@@ -527,7 +610,7 @@ app.post('/prompts/:id/confirm-purchase', authenticateToken, async (req, res) =>
   }
 });
 
-// Gratis purchase endpoint (voor testen - kan later verwijderd worden)
+// Gratis purchase endpoint (voor testen)
 app.post('/prompts/:id/purchase', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -621,11 +704,9 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  // Handle the event
   if (event.type === 'checkout.session.completed') {
     const session = event.data.object;
     
-    // Automatisch purchase aanmaken na succesvolle betaling
     try {
       const { promptId, buyerId } = session.metadata;
       
