@@ -10,6 +10,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 require('dotenv').config();
 const prisma = require('./db');
 const { verifyPrompt } = require('./verify');
+const { sendWelcomeEmail, sendPurchaseConfirmation, sendSaleNotification, sendPromptApproved } = require('./email');
 
 // Anthropic client voor proof data generatie
 const anthropic = new Anthropic({
@@ -230,6 +231,11 @@ app.post('/register', async (req, res) => {
         name: user.name,
         role: user.role
       }
+    });
+
+    // Stuur welkom email (async, niet wachten)
+    sendWelcomeEmail(user.email, user.name).catch(err => {
+      console.error('Error sending welcome email:', err);
     });
 
   } catch (error) {
@@ -484,6 +490,14 @@ app.post('/prompts/:id/verify', async (req, res) => {
       }
     });
 
+    // Stuur e-mail als prompt is goedgekeurd
+    if (verification.isVerified) {
+      const seller = await prisma.user.findUnique({ where: { id: prompt.sellerId } });
+      sendPromptApproved(seller.email, seller.name, updatedPrompt).catch(err => {
+        console.error('Error sending prompt approved email:', err);
+      });
+    }
+
     res.json({
       message: verification.isVerified ? 'Prompt geverifieerd!' : 'Prompt afgekeurd',
       verification,
@@ -589,7 +603,14 @@ app.post('/prompts/:id/confirm-purchase', authenticateToken, async (req, res) =>
       });
     }
 
-    const prompt = await prisma.prompt.findUnique({ where: { id } });
+    // Haal prompt met seller info op
+    const prompt = await prisma.prompt.findUnique({ 
+      where: { id },
+      include: { seller: true }
+    });
+
+    // Haal buyer info op
+    const buyer = await prisma.user.findUnique({ where: { id: buyerId } });
 
     const purchase = await prisma.purchase.create({
       data: {
@@ -603,6 +624,19 @@ app.post('/prompts/:id/confirm-purchase', authenticateToken, async (req, res) =>
       message: 'Purchase confirmed!',
       purchase,
       promptText: prompt.promptText
+    });
+
+    // Stuur e-mails (async, niet wachten)
+    const earnings = prompt.price * 0.7;
+    
+    // E-mail naar koper
+    sendPurchaseConfirmation(buyer.email, buyer.name, prompt, prompt.promptText).catch(err => {
+      console.error('Error sending purchase confirmation:', err);
+    });
+    
+    // E-mail naar verkoper
+    sendSaleNotification(prompt.seller.email, prompt.seller.name, prompt, earnings).catch(err => {
+      console.error('Error sending sale notification:', err);
     });
 
   } catch (error) {
