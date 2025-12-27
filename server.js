@@ -850,6 +850,111 @@ app.get('/my/purchases', authenticateToken, async (req, res) => {
   }
 });
 
+// Haal mijn eigen prompts op (als verkoper)
+app.get('/my/prompts', authenticateToken, async (req, res) => {
+  try {
+    const prompts = await prisma.prompt.findMany({
+      where: { sellerId: req.user.userId },
+      select: {
+        id: true,
+        title: true,
+        description: true,
+        price: true,
+        category: true,
+        aiModel: true,
+        status: true,
+        isVerified: true,
+        createdAt: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json(prompts);
+  } catch (error) {
+    res.status(500).json({ error: 'Database error', details: error.message });
+  }
+});
+
+// Verwijder eigen prompt
+app.delete('/prompts/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+
+    // Check of prompt bestaat en van deze user is
+    const prompt = await prisma.prompt.findUnique({
+      where: { id }
+    });
+
+    if (!prompt) {
+      return res.status(404).json({ error: 'Prompt not found' });
+    }
+
+    if (prompt.sellerId !== userId) {
+      return res.status(403).json({ error: 'You can only delete your own prompts' });
+    }
+
+    // Check of er purchases zijn
+    const purchases = await prisma.purchase.findMany({
+      where: { promptId: id }
+    });
+
+    if (purchases.length > 0) {
+      return res.status(400).json({ error: 'Cannot delete prompt with existing purchases. Contact support.' });
+    }
+
+    // Verwijder prompt
+    await prisma.prompt.delete({
+      where: { id }
+    });
+
+    res.json({ message: 'Prompt deleted successfully' });
+
+  } catch (error) {
+    res.status(500).json({ error: 'Server error', details: error.message });
+  }
+});
+
+// Update eigen prompt
+app.put('/prompts/:id', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.userId;
+    const { title, description, price, category, aiModel, promptText } = req.body;
+
+    // Check of prompt bestaat en van deze user is
+    const prompt = await prisma.prompt.findUnique({
+      where: { id }
+    });
+
+    if (!prompt) {
+      return res.status(404).json({ error: 'Prompt not found' });
+    }
+
+    if (prompt.sellerId !== userId) {
+      return res.status(403).json({ error: 'You can only edit your own prompts' });
+    }
+
+    // Update prompt
+    const updatedPrompt = await prisma.prompt.update({
+      where: { id },
+      data: {
+        title: title || prompt.title,
+        description: description || prompt.description,
+        price: price ? parseFloat(price) : prompt.price,
+        category: category || prompt.category,
+        aiModel: aiModel || prompt.aiModel,
+        promptText: promptText || prompt.promptText
+      }
+    });
+
+    res.json({ message: 'Prompt updated', prompt: updatedPrompt });
+
+  } catch (error) {
+    res.status(500).json({ error: 'Server error', details: error.message });
+  }
+});
+
 // Stripe Webhook endpoint
 app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
